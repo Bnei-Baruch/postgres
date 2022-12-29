@@ -26,7 +26,7 @@ declare -A alpineVersion=(
 	#[9.6]='3.5'
 )
 
-packagesBase='http://apt.postgresql.org/pub/repos/apt/dists/'
+packagesBase='http://apt-archive.postgresql.org/pub/repos/apt/dists/'
 
 declare -A suitePackageList=() suiteArches=()
 travisEnv=

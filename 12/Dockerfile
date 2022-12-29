@@ -86,13 +86,13 @@ RUN set -ex; \
 	case "$dpkgArch" in \
 		amd64|i386|ppc64el) \
 # arches officialy built by upstream
-			echo "deb http://apt.postgresql.org/pub/repos/apt/ buster-pgdg main $PG_MAJOR" > /etc/apt/sources.list.d/pgdg.list; \
+			echo "deb http://apt-archive.postgresql.org/pub/repos/apt/ buster-pgdg main $PG_MAJOR" > /etc/apt/sources.list.d/pgdg.list; \
 			apt-get update; \
 			;; \
 		*) \
 # we're on an architecture upstream doesn't officially build for
 # let's build binaries from their published source packages
-			echo "deb-src http://apt.postgresql.org/pub/repos/apt/ buster-pgdg main $PG_MAJOR" > /etc/apt/sources.list.d/pgdg.list; \
+			echo "deb-src http://apt-archive.postgresql.org/pub/repos/apt/ buster-pgdg main $PG_MAJOR" > /etc/apt/sources.list.d/pgdg.list; \
 			\
 			case "$PG_MAJOR" in \
 				9.* | 10 ) ;; \
