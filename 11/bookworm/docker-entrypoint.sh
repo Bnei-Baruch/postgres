@@ -115,7 +115,7 @@ docker_create_database_basebackup() {
 		set -- --waldir "$POSTGRES_BASEBACKUP_WALDIR" "$@"
 	fi
 
-	eval 'pg_basebackup -D "$PGDATA" -Fp -X stream -C -S "$PRIMARY_SLOTNAME" -d postgresql://"$PRIMARY_USER":"$PRIMARY_PASSWORD"@"$PRIMARY_HOST":"$PRIMARY_PORT" -R -P '"$@"
+	eval 'pg_basebackup -D "$PGDATA" -Fp -X stream -S "$PRIMARY_SLOTNAME" -d postgresql://"$PRIMARY_USER":"$PRIMARY_PASSWORD"@"$PRIMARY_HOST":"$PRIMARY_PORT" -R -P '"$@"
 	# unset/cleanup "nss_wrapper" bits
 	if [ "${LD_PRELOAD:-}" = '/usr/lib/libnss_wrapper.so' ]; then
 		rm -f "$NSS_WRAPPER_PASSWD" "$NSS_WRAPPER_GROUP"
