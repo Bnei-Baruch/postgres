@@ -115,7 +115,7 @@ docker_create_database_basebackup() {
 		set -- --waldir "$POSTGRES_BASEBACKUP_WALDIR" "$@"
 	fi
 
-	eval 'pg_basebackup -D "$PGDATA" -Fp -X stream -C -S "$PRIMARY_SLOTNAME" -d postgresql://"$PRIMARY_USER":"$PRIMARY_PASSWORD"@"$PRIMARY_HOST":"$PRIMARY_PORT" -R -P '"$@"
+	eval 'pg_basebackup -D "$PGDATA" -Fp -X stream -S "$PRIMARY_SLOTNAME" -d postgresql://"$PRIMARY_USER":"$PRIMARY_PASSWORD"@"$PRIMARY_HOST":"$PRIMARY_PORT" -R -P '"$@"
 	# unset/cleanup "nss_wrapper" bits
 	if [ "${LD_PRELOAD:-}" = '/usr/lib/libnss_wrapper.so' ]; then
 		rm -f "$NSS_WRAPPER_PASSWD" "$NSS_WRAPPER_GROUP"
@@ -336,7 +336,7 @@ _main() {
 		docker_create_db_directories
 		if [ "$(id -u)" = '0' ]; then
 			# then restart script as postgres user
-			exec gosu postgres "$BASH_SOURCE" "$@"
+			exec su-exec postgres "$BASH_SOURCE" "$@"
 		fi
 
 		# only run initialization on an empty data directory
@@ -346,10 +346,10 @@ _main() {
 			if [ "$PRIMARY_HOST" ]; then
 				docker_create_database_basebackup
 			else
-			  # check dir permissions to reduce likelihood of half-initialized database
-			  ls /docker-entrypoint-initdb.d/ > /dev/null
+        # check dir permissions to reduce likelihood of half-initialized database
+        ls /docker-entrypoint-initdb.d/ > /dev/null
 
-				docker_init_database_dir
+        docker_init_database_dir
 			fi
 
 			pg_setup_hba_conf "$@"

@@ -98,31 +98,6 @@ docker_init_database_dir() {
 	fi
 }
 
-# initialize empty PGDATA directory with new database via 'pg_basebackup'
-# arguments to `pg_basebackup` can be passed via PRIMARY_SLOTNAME, PRIMARY_USER, PRIMARY_PASSWORD, PRIMARY_HOST and PRIMARY_PORT
-docker_create_database_basebackup() {
-	# "initdb" is particular about the current user existing in "/etc/passwd", so we use "nss_wrapper" to fake that if necessary
-	# see https://github.com/docker-library/postgres/pull/253, https://github.com/docker-library/postgres/issues/359, https://cwrap.org/nss_wrapper.html
-	if ! getent passwd "$(id -u)" &> /dev/null && [ -e /usr/lib/libnss_wrapper.so ]; then
-		export LD_PRELOAD='/usr/lib/libnss_wrapper.so'
-		export NSS_WRAPPER_PASSWD="$(mktemp)"
-		export NSS_WRAPPER_GROUP="$(mktemp)"
-		echo "postgres:x:$(id -u):$(id -g):PostgreSQL:$PGDATA:/bin/false" > "$NSS_WRAPPER_PASSWD"
-		echo "postgres:x:$(id -g):" > "$NSS_WRAPPER_GROUP"
-	fi
-
-	if [ "$POSTGRES_BASEBACKUP_WALDIR" ]; then
-		set -- --waldir "$POSTGRES_BASEBACKUP_WALDIR" "$@"
-	fi
-
-	eval 'pg_basebackup -D "$PGDATA" -Fp -X stream -C -S "$PRIMARY_SLOTNAME" -d postgresql://"$PRIMARY_USER":"$PRIMARY_PASSWORD"@"$PRIMARY_HOST":"$PRIMARY_PORT" -R -P '"$@"
-	# unset/cleanup "nss_wrapper" bits
-	if [ "${LD_PRELOAD:-}" = '/usr/lib/libnss_wrapper.so' ]; then
-		rm -f "$NSS_WRAPPER_PASSWD" "$NSS_WRAPPER_GROUP"
-		unset LD_PRELOAD NSS_WRAPPER_PASSWD NSS_WRAPPER_GROUP
-	fi
-}
-
 # print large warning if POSTGRES_PASSWORD is long
 # error if both POSTGRES_PASSWORD is empty and POSTGRES_HOST_AUTH_METHOD is not 'trust'
 # print large warning if POSTGRES_HOST_AUTH_METHOD is set to 'trust'
@@ -247,11 +222,6 @@ docker_setup_env() {
 	file_env 'POSTGRES_USER' 'postgres'
 	file_env 'POSTGRES_DB' "$POSTGRES_USER"
 	file_env 'POSTGRES_INITDB_ARGS'
-	file_env 'PRIMARY_HOST'
-	file_env 'PRIMARY_PORT' '5432'
-	file_env 'PRIMARY_SLOTNAME' 'dockerslot'
-	file_env 'PRIMARY_USER' 'postgres'
-	file_env 'PRIMARY_PASSWORD'
 	: "${POSTGRES_HOST_AUTH_METHOD:=}"
 
 	declare -g DATABASE_ALREADY_EXISTS
@@ -280,7 +250,6 @@ pg_setup_hba_conf() {
 			printf '# see https://www.postgresql.org/docs/12/auth-trust.html\n'
 		fi
 		printf 'host all all all %s\n' "$POSTGRES_HOST_AUTH_METHOD"
-		echo "host replication all all $POSTGRES_HOST_AUTH_METHOD"
 	} >> "$PGDATA/pg_hba.conf"
 }
 
@@ -336,22 +305,17 @@ _main() {
 		docker_create_db_directories
 		if [ "$(id -u)" = '0' ]; then
 			# then restart script as postgres user
-			exec gosu postgres "$BASH_SOURCE" "$@"
+			exec su-exec postgres "$BASH_SOURCE" "$@"
 		fi
 
 		# only run initialization on an empty data directory
 		if [ -z "$DATABASE_ALREADY_EXISTS" ]; then
 			docker_verify_minimum_env
 
-			if [ "$PRIMARY_HOST" ]; then
-				docker_create_database_basebackup
-			else
-			  # check dir permissions to reduce likelihood of half-initialized database
-			  ls /docker-entrypoint-initdb.d/ > /dev/null
+			# check dir permissions to reduce likelihood of half-initialized database
+			ls /docker-entrypoint-initdb.d/ > /dev/null
 
-				docker_init_database_dir
-			fi
-
+			docker_init_database_dir
 			pg_setup_hba_conf "$@"
 
 			# PGPASSWORD is required for psql when authentication is required for 'local' connections via pg_hba.conf and is otherwise harmless

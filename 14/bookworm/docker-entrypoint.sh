@@ -102,20 +102,30 @@ docker_init_database_dir() {
 # arguments to `pg_basebackup` can be passed via PRIMARY_SLOTNAME, PRIMARY_USER, PRIMARY_PASSWORD, PRIMARY_HOST and PRIMARY_PORT
 docker_create_database_basebackup() {
 	# "initdb" is particular about the current user existing in "/etc/passwd", so we use "nss_wrapper" to fake that if necessary
-	# see https://github.com/docker-library/postgres/pull/253, https://github.com/docker-library/postgres/issues/359, https://cwrap.org/nss_wrapper.html
-	if ! getent passwd "$(id -u)" &> /dev/null && [ -e /usr/lib/libnss_wrapper.so ]; then
-		export LD_PRELOAD='/usr/lib/libnss_wrapper.so'
-		export NSS_WRAPPER_PASSWD="$(mktemp)"
-		export NSS_WRAPPER_GROUP="$(mktemp)"
-		echo "postgres:x:$(id -u):$(id -g):PostgreSQL:$PGDATA:/bin/false" > "$NSS_WRAPPER_PASSWD"
-		echo "postgres:x:$(id -g):" > "$NSS_WRAPPER_GROUP"
-	fi
+  # see https://github.com/docker-library/postgres/pull/253, https://github.com/docker-library/postgres/issues/359, https://cwrap.org/nss_wrapper.html
+  local uid; uid="$(id -u)"
+  if ! getent passwd "$uid" &> /dev/null; then
+    # see if we can find a suitable "libnss_wrapper.so" (https://salsa.debian.org/sssd-team/nss-wrapper/-/commit/b9925a653a54e24d09d9b498a2d913729f7abb15)
+    local wrapper
+    for wrapper in {/usr,}/lib{/*,}/libnss_wrapper.so; do
+      if [ -s "$wrapper" ]; then
+        NSS_WRAPPER_PASSWD="$(mktemp)"
+        NSS_WRAPPER_GROUP="$(mktemp)"
+        export LD_PRELOAD="$wrapper" NSS_WRAPPER_PASSWD NSS_WRAPPER_GROUP
+        local gid; gid="$(id -g)"
+        printf 'postgres:x:%s:%s:PostgreSQL:%s:/bin/false\n' "$uid" "$gid" "$PGDATA" > "$NSS_WRAPPER_PASSWD"
+        printf 'postgres:x:%s:\n' "$gid" > "$NSS_WRAPPER_GROUP"
+        break
+      fi
+    done
+  fi
 
-	if [ "$POSTGRES_BASEBACKUP_WALDIR" ]; then
-		set -- --waldir "$POSTGRES_BASEBACKUP_WALDIR" "$@"
-	fi
+  if [ -n "${POSTGRES_INITDB_WALDIR:-}" ]; then
+    set -- --waldir "$POSTGRES_INITDB_WALDIR" "$@"
+  fi
 
-	eval 'pg_basebackup -D "$PGDATA" -Fp -X stream -C -S "$PRIMARY_SLOTNAME" -d postgresql://"$PRIMARY_USER":"$PRIMARY_PASSWORD"@"$PRIMARY_HOST":"$PRIMARY_PORT" -R -P '"$@"
+	eval 'pg_basebackup -D "$PGDATA" -Fp -X stream -S "$PRIMARY_SLOTNAME" -d postgresql://"$PRIMARY_USER":"$PRIMARY_PASSWORD"@"$PRIMARY_HOST":"$PRIMARY_PORT" -R -P -v'"$@"
+
 	# unset/cleanup "nss_wrapper" bits
 	if [ "${LD_PRELOAD:-}" = '/usr/lib/libnss_wrapper.so' ]; then
 		rm -f "$NSS_WRAPPER_PASSWD" "$NSS_WRAPPER_GROUP"
@@ -248,10 +258,10 @@ docker_setup_env() {
 	file_env 'POSTGRES_DB' "$POSTGRES_USER"
 	file_env 'POSTGRES_INITDB_ARGS'
 	file_env 'PRIMARY_HOST'
-	file_env 'PRIMARY_PORT' '5432'
-	file_env 'PRIMARY_SLOTNAME' 'dockerslot'
-	file_env 'PRIMARY_USER' 'postgres'
-	file_env 'PRIMARY_PASSWORD'
+  file_env 'PRIMARY_PORT' '5432'
+  file_env 'PRIMARY_SLOTNAME' 'dockerslot'
+  file_env 'PRIMARY_USER' 'postgres'
+  file_env 'PRIMARY_PASSWORD'
 	: "${POSTGRES_HOST_AUTH_METHOD:=}"
 
 	declare -g DATABASE_ALREADY_EXISTS
@@ -280,7 +290,7 @@ pg_setup_hba_conf() {
 			printf '# see https://www.postgresql.org/docs/12/auth-trust.html\n'
 		fi
 		printf 'host all all all %s\n' "$POSTGRES_HOST_AUTH_METHOD"
-		echo "host replication all all $POSTGRES_HOST_AUTH_METHOD"
+		printf 'host replication all all %s\n' "$POSTGRES_HOST_AUTH_METHOD"
 	} >> "$PGDATA/pg_hba.conf"
 }
 
@@ -343,15 +353,14 @@ _main() {
 		if [ -z "$DATABASE_ALREADY_EXISTS" ]; then
 			docker_verify_minimum_env
 
+			# check dir permissions to reduce likelihood of half-initialized database
+			ls /docker-entrypoint-initdb.d/ > /dev/null
+
 			if [ "$PRIMARY_HOST" ]; then
-				docker_create_database_basebackup
-			else
-			  # check dir permissions to reduce likelihood of half-initialized database
-			  ls /docker-entrypoint-initdb.d/ > /dev/null
-
-				docker_init_database_dir
-			fi
-
+        docker_create_database_basebackup
+      else
+        docker_init_database_dir
+      fi
 			pg_setup_hba_conf "$@"
 
 			# PGPASSWORD is required for psql when authentication is required for 'local' connections via pg_hba.conf and is otherwise harmless
